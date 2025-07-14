@@ -1,116 +1,113 @@
-import express from "express";
-import booksController from "../controllers/books.js";
-import userAuth from "../middlewares/AuthMiddleware.js";
-import { logger } from "../middlewares/LoggerMiddleware.js";
-import upload from "../middlewares/multer.js";
-import validate from "../middlewares/ValidationMiddleware.js";
-import { bookValidation } from "../validations/BookValidation.js";
+class BookManager {
+  static async loadBooks(page = 1, filters = {}) {
+    try {
+      const response = await BooksAPI.getBooks(page, 12, filters);
+      const booksContainer = document.getElementById("books-grid");
+      this.renderBooks(response.data, booksContainer);
+      return response;
+    } catch (error) {
+      console.error("Error loading books:", error);
+      throw error;
+    }
+  }
 
-const booksRouter = express.Router();
-
-booksRouter.post(
-  "/",
-  userAuth,
-  upload.single("Image"),
-  bookValidation,
-  validate,
-  async (req, res, next) => {
-    if (req.user.role !== "admin") {
-      logger.warn(`Unauthorized user list access attempt by: ${req.user.id}`);
-      return res
-        .status(403)
-        .send({
-          status: "failed",
-          data: "You do not have permission to perform this action.",
-        });
+  static renderBooks(books, container) {
+    if (!books || books.length === 0) {
+      container.innerHTML = "<p>No books found.</p>";
+      return;
     }
 
-    await booksController
-      .create(req.body)
-      .then((data) => {
-        logger.info(`Admin with id [${req.user.id}] created a new book`);
-        res.status(200).send({ status: "success", data: data });
-      })
-      .catch((error) => next(error));
-  }
-);
-
-booksRouter.get('/', async (req, res, next) => {
-  const limit = req.query.limit || 4;
-  const skip = ((req.query.page || 1) - 1) * limit;
-  await booksController.getMany(req.body, skip, limit)
-    .then(data => {
-      logger.info(`User read books data`);
-      res.status(200).send({ status: "success", data: data })
-    }).catch(error => next(error));
-});
-
-booksRouter.get("/:id", userAuth, async (req, res, next) => {
-  await booksController
-    .getById(req.params.id)
-    .then((data) => {
-      logger.info(
-        `User with id [${req.user.id}] read book data with id: [${req.params.id}]`
-      );
-      res.status(200).send({ status: "success", data: data });
-    })
-    .catch((error) => next(error));
-});
-
-booksRouter.get("/:id/reviews", userAuth, async (req, res, next) => {
-  await booksController
-    .getReviews(req.params.id)
-    .then((data) => {
-      logger.info(
-        `User with id [${req.user.id}] read book reviews with id: [${req.params.id}]`
-      );
-      res.status(200).send({ status: "success", data: data });
-    })
-    .catch((error) => next(error));
-});
-
-booksRouter.patch("/:id", userAuth, async (req, res, next) => {
-  if (req.user.role !== "admin") {
-    logger.warn(`Unauthorized user list access attempt by: ${req.user.id}`);
-    return res
-      .status(403)
-      .send({
-        status: "failed",
-        data: "You do not have permission to perform this action.",
-      });
+    container.innerHTML = books
+      .map(
+        (book) => `
+            <div class="book-card">
+                <div class="book-cover">
+                    <img src="${
+                      book.Image || "assets/images/book-placeholder.jpg"
+                    }" alt="${book.Title}">
+                </div>
+                <div class="book-info">
+                    <h3>${book.Title}</h3>
+                    <p class="author">By ${book.Author}</p>
+                    <p class="price">$${book.Price}</p>
+                    <div class="book-actions">
+                        <a href="book-details.html?id=${
+                          book._id
+                        }" class="btn btn-secondary">Details</a>
+                        <button class="btn btn-primary add-to-cart" 
+                                onclick="BookManager.handleAddToCart('${
+                                  book._id
+                                }')" 
+                                data-id="${book._id}">
+                            Add to Cart
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `
+      )
+      .join("");
   }
 
-  await booksController
-    .update(req.params.id, ...req.body)
-    .then((data) => {
-      logger.info(
-        `Admin with id [${req.user.id}] updated a book with id: [${req.params.id}]`
-      );
-      res.status(200).send({ status: "success", data: req.body });
-    })
-    .catch((error) => next(error));
-});
+  static async handleAddToCart(bookId) {
+    try {
+      if (!isLoggedIn()) {
+        showMessage("Please log in to add items to your cart.", "error");
+        setTimeout(() => {
+          window.location.href = "login.html";
+        }, 2000);
+        return;
+      }
 
-booksRouter.delete("/:id", userAuth, async (req, res, next) => {
-  if (req.user.role !== "admin") {
-    logger.warn(`Unauthorized user list access attempt by: ${req.user.id}`);
-    return res
-      .status(403)
-      .send({
-        status: "failed",
-        data: "You do not have permission to perform this action.",
-      });
+      const button = event.target;
+      button.disabled = true;
+      button.textContent = "Adding...";
+
+      await CartAPI.addToCart(bookId);
+      showMessage("Book added to cart!", "success");
+      updateCartCount();
+    } catch (error) {
+      console.error("Error adding to cart:", error);
+      showMessage("Error adding to cart. Please try again.", "error");
+    } finally {
+      const button = event.target;
+      button.disabled = false;
+      button.textContent = "Add to Cart";
+    }
+  }
+}
+
+function updateCartCount() {
+  if (!isLoggedIn()) {
+    document.getElementById("cart-count").textContent = "(0)";
+    return;
   }
 
-  await booksController
-    .remove(req.params.id)
-    .then((data) => {
-      logger.info(
-        `Admin with id [${req.user.id}] deleted a book with id: [${req.params.id}]`
+  CartAPI.getCart()
+    .then((response) => {
+      const count = response.data.reduce(
+        (total, item) => total + item.Quantity,
+        0
       );
-      res.status(200).send({ status: "success", data: data });
+      document.getElementById("cart-count").textContent = `(${count})`;
     })
-    .catch((error) => next(error));
-});
+    .catch((error) => {
+      console.error("Error updating cart count:", error);
+      document.getElementById("cart-count").textContent = "(0)";
+    });
+}
 
-export default booksRouter;
+function showMessage(message, type = "info") {
+  const messageContainer = document.createElement("div");
+  messageContainer.className = `message ${type}`;
+  messageContainer.textContent = message;
+
+  document.body.appendChild(messageContainer);
+
+  setTimeout(() => {
+    messageContainer.classList.add("hide");
+    setTimeout(() => {
+      document.body.removeChild(messageContainer);
+    }, 500);
+  }, 3000);
+}
