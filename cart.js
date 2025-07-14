@@ -1,34 +1,25 @@
-import User from "../models/UserModel.js";
-import Book from "../models/BookModel.js";
+import express from "express";
+import cartController from "../controllers/cart.js";
+import userAuth from '../middlewares/AuthMiddleware.js';
 
-const addToCart = async (userId, bookId) => {
-    const user = await User.findById(userId);
-    if (!user) throw new Error("User not found");
+const cartRouter = express.Router();
 
-    const book = await Book.findById(bookId);
-    if (!book) throw new Error("Book not found");
+cartRouter.post("/", userAuth, async (req, res, next) => {
+    await cartController.addToCart(req.user.id, req.body.bookId)
+        .then(data => res.status(200).send({ status: "success", data }))
+        .catch(error => next(error));
+});
 
-    user.Cart.push(bookId);
-    await user.save();
+cartRouter.delete("/:id", userAuth, async (req, res, next) => {
+    await cartController.removeFromCart(req.user.id, req.params.id)
+        .then(data => res.status(200).send({ status: "success", data }))
+        .catch(error => next(error));
+});
 
-    return await user.populate("Cart");
-};
+cartRouter.get("/", userAuth, async (req, res, next) => {
+    await cartController.getCart(req.user.id)
+        .then(data => res.status(200).send({ status: "success", data }))
+        .catch(error => next(error));
+});
 
-const removeFromCart = async (userId, bookId) => {
-    const user = await User.findById(userId);
-    if (!user) throw new Error("User not found");
-
-    user.Cart = user.Cart.filter(id => id.toString() !== bookId);
-    await user.save();
-
-    return await user.populate("Cart");
-};
-
-const getCart = async (userId) => {
-    const user = await User.findById(userId).populate("Cart");
-    if (!user) throw new Error("User not found");
-
-    return user.Cart;
-};
-
-export default { addToCart, removeFromCart, getCart };
+export default cartRouter;

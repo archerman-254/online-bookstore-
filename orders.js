@@ -1,58 +1,45 @@
-import mongoose from "mongoose";
-import Order from "../models/OrderModel.js";
-import Book from "../models/BookModel.js";
-import User from "../models/UserModel.js";
-import sendEmail from "../services/mail.js";
+import express from 'express';
+import userAuth from '../middlewares/AuthMiddleware.js';
+import ordersController from '../controllers/orders.js';
+import validate from '../middlewares/ValidationMiddleware.js';
+import { orderValidation } from '../validations/orderValidation.js';
 
-const create = async (orderData, userId) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+const ordersRouter = express.Router();
 
-    try {
-        const { Books, TotalPrice } = orderData;
+ordersRouter.post("/", userAuth, orderValidation, validate, async (req, res, next) => {
+    await ordersController.create(req.body, req.user.id)
+        .then(data => res.status(201).send({ status: "success", data }))
+        .catch(error => next(error));
+});
 
-        if (!Books || Books.length === 0 || TotalPrice < 0) {
-            throw new Error("Invalid order data");
-        }
-
-        const validBooks = await Book.find({ _id: { $in: Books } }).session(session);
-        if (validBooks.length !== Books.length) {
-            throw new Error("One or more books not found");
-        }
-
-        for (const book of validBooks) {
-            if (book.Stock <= 0) {
-                throw new Error(`Book ${book.Title} is out of stock`);
-            }
-            book.Stock -= 1;
-            await book.save({ session });
-        }
-
-        const order = await Order.create([{ User_ID: userId, Books: Books, TotalPrice: TotalPrice }], { session });
-
-        await session.commitTransaction();
-
-        const { Name, Email } = await User.findById(userId);
-        sendEmail(Email, 'Order Confirmation', `Dear ${Name},\nThank you for your order!\nWe will notify you once your order is shipped.\n\nBest regards,\nOnline Bookstore`);
-
-        return order[0];
-    } catch (error) {
-        await session.abortTransaction();
-        session.endSession();
-        throw error;
+ordersRouter.get("/", userAuth, async (req, res, next) => {
+    if (req.user.role !== "admin") {
+        return res.status(403).send({ status: "error", message: "Access denied" });
     }
-};
+    const limit = req.query.limit || 5;
+    const skip = ((req.query.page || 1) - 1) * limit;
+    await ordersController.getMany(skip, limit)
+        .then(data => res.status(200).send({ status: "success", data }))
+        .catch(error => next(error));
+});
 
-const getMany = (skip, limit) => {
-    return Order.find().populate("User_ID", "Name Email").populate("Books").skip(skip).limit(limit);
-};
+ordersRouter.get("/:id", userAuth, async (req, res, next) => {
+    if (req.user.role !== "admin") {
+        return res.status(403).send({ status: "error", message: "Access denied" });
+    }
+    await ordersController.getById(req.params.id)
+        .then(data => res.status(200).send({ status: "success", data }))
+        .catch(error => next(error));
+});
 
-const getById = (orderId) => {
-    return Order.findById(orderId).populate("User_ID", "Name Email").populate("Books");
-};
+ordersRouter.delete("/:id", userAuth, async (req, res, next) => {
+    if (req.user.role !== "admin") {
+        return res.status(403).send({ status: "error", message: "Access denied" });
+    }
 
-const remove = (orderId) => {
-    return Order.findByIdAndDelete(orderId);
-};
+    await ordersController.remove(req.params.id)
+        .then(() => res.status(200).send({ status: "success", message: "Order deleted" }))
+        .catch(error => next(error));
+});
 
-export default { create, getMany, getById, remove };
+export default ordersRouter;
